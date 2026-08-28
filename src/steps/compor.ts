@@ -111,7 +111,18 @@ async function registrarNoAcervo(job: Job, url: string, previewUrl?: string): Pr
       })
       .onConflictDoUpdate({
         target: videos.jobId,
-        set: { url, previewUrl, custoCents: job.costCents, atualizadoEm: new Date() },
+        // Tudo que pode ter mudado desde o primeiro registro entra aqui. Deixar
+        // `modelo` e `nome` de fora fazia o campo nascer errado e nunca se
+        // corrigir: uma recomposicao atualizava a data e mantinha o vazio.
+        set: {
+          nome: job.name,
+          url,
+          previewUrl,
+          refVideoUrl: job.refVideoUrl,
+          modelo: modeloDe(job.manifest.modeloVideo).rotulo,
+          custoCents: job.costCents,
+          atualizadoEm: new Date(),
+        },
       });
   } catch (e) {
     console.error(`[${job.name}] nao registrei no acervo: ${(e as Error).message}`);
