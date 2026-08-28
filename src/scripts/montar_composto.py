@@ -150,37 +150,51 @@ def main():
         print("ERRO: nenhum trecho com duracao util")
         return 1
 
-    def alturas(faixas):
-        """Alturas de saida das faixas. Somam H exatamente, por construcao.
+    def ret(r):
+        """Retangulo da referencia -> pixels de saida. Par, porque h264 exige."""
+        x0, y0 = par(r["x0"] * k), par(r["y0"] * k)
+        return x0, y0, max(2, par(r["x1"] * k) - x0), max(2, par(r["y1"] * k) - y0)
 
-        Arredondar cada faixa isolada deixaria sobra ou falta de alguns pixels e
-        o vstack sairia com altura diferente de H em alguns trechos — o concat
-        recusa isso. Entao arredondamos as FRONTEIRAS e tiramos a diferenca.
+    def camadas_de(t):
+        """A pilha de camadas do trecho, de baixo pra cima.
+
+        Aceita o formato antigo (`faixas`, empilhadas de cima a baixo ocupando a
+        largura toda) e converte pra camadas. Assim uma rodada comecada antes
+        deste formato continua montando igual.
         """
-        b = [par(f["y0"] * k) for f in faixas] + [H]
-        return [b[i + 1] - b[i] for i in range(len(faixas))]
+        if t.get("camadas"):
+            return t["camadas"]
+        fx = t["faixas"]
+        b = [par(f["y0"] * k) for f in fx] + [H]
+        saida = []
+        for i, f in enumerate(fx):
+            y0r, y1r = f["y0"], f["y1"]
+            saida.append({
+                "fonte": f["fonte"],
+                "de": {"x0": 0, "y0": y0r, "x1": rw, "y1": y1r},
+                "para": {"x0": 0, "y0": y0r, "x1": rw, "y1": y1r},
+            })
+        return saida
 
     print(f"referencia : {rw}x{rh}  {rdur:.2f}s  {rfps:.2f}fps")
     print(f"avatar     : {aw}x{ah}  {adur:.2f}s  {afps:.2f}fps   cabeca y={cab_av}")
+    print(f"saida      : {W}x{H}   {len(trechos)} trecho(s)   escala {escala:.3f} ({origem})")
     if abs(rfps - afps) > 0.01:
         print(f"             cadencias diferentes — tudo normalizado em {afps:.2f}fps")
-    print(f"saida      : {W}x{H}   {len(trechos)} trecho(s)   escala {escala:.3f} ({origem})")
     for i, t in enumerate(trechos):
-        hs = alturas(t["faixas"])
-        pilha = " + ".join(f"{f['fonte']}:{h}px" for f, h in zip(t["faixas"], hs))
-        print(f"  [{i}] {t['ini_av']:6.2f}-{t['fim_av']:6.2f}s   {pilha}"
-              + (f"   (ref {t['ini_ref']:.2f}-{t['fim_ref']:.2f}s)" if any(f["fonte"] == "ref" for f in t["faixas"]) else ""))
+        print(f"  [{i}] {t['ini_av']:6.2f}-{t['fim_av']:6.2f}s")
+        for c in camadas_de(t):
+            x, y, cw, ch = ret(c["para"])
+            print(f"        {c['fonte']:>6} -> {cw}x{ch} em ({x},{y})")
 
     for i, t in enumerate(trechos):
-        fx = t["faixas"]
-        if not fx:
-            print(f"\nERRO: trecho {i} sem faixas"); return 1
-        if sum(1 for f in fx if f["fonte"] == "avatar") != 1:
-            print(f"\nERRO: trecho {i} precisa de exatamente UMA faixa de avatar"); return 1
-        if any(h <= 0 for h in alturas(fx)):
-            print(f"\nERRO: trecho {i} tem faixa de altura zero"); return 1
-        if any(f["fonte"] == "ref" for f in fx) and t["fim_ref"] - t["ini_ref"] <= 0:
-            print(f"\nERRO: trecho {i} reaproveita a referencia mas nao tem janela nela"); return 1
+        cs = camadas_de(t)
+        if not cs:
+            print(f"\nERRO: trecho {i} sem camadas"); return 1
+        if sum(1 for c in cs if c["fonte"] == "avatar") != 1:
+            print(f"\nERRO: trecho {i} precisa de exatamente UMA camada de avatar"); return 1
+        if any(c["fonte"] == "ref" for c in cs) and t["fim_ref"] - t["ini_ref"] <= 0:
+            print(f"\nERRO: trecho {i} usa a referencia mas nao tem janela nela"); return 1
     if trechos[-1]["fim_av"] > adur + 0.05:
         print(f"\nERRO: a linha do tempo passa do avatar ({adur:.2f}s)"); return 1
     if args.dry_run:
@@ -188,112 +202,115 @@ def main():
 
     # Uma cadencia so, a do avatar (que e quem manda no audio).
     #
-    # Este criativo veio com referencia a 60 fps e avatar a 30. O `vstack`
-    # sincroniza por timestamp: com cadencias diferentes ele fica alinhando
-    # quadros que nao casam, e o render de 24s passou de 13 minutos sem terminar
-    # -- inclusive em 180px de largura, o que provou que nao era volume de pixel.
+    # Referencia a 60fps com avatar a 30 fazia o compositor nunca convergir: o
+    # overlay sincroniza por timestamp e ficava alinhando quadros que nao casam.
     # O `concat` tambem exige cadencia igual entre os trechos.
     FPS = f"fps={afps:.5f},"
 
-    def fundo_de(h):
+    def fundo_de(cw, ch):
         if args.sem_blur:
-            return f"crop={W}:{h}:0:0,scale={W}:{h}"
-        return (f"scale={W}:-2,crop={W}:{h}:0:{max(0, int((ah * W / aw - h) / 2))},"
-                f"gblur=sigma={max(12, W // 27)},eq=brightness=0.03")
+            return f"crop={cw}:{ch}:0:0,scale={cw}:{ch}"
+        return (f"scale={cw}:-2,crop={cw}:{ch}:0:{max(0, int((ah * cw / aw - ch) / 2))},"
+                f"gblur=sigma={max(12, cw // 27)},eq=brightness=0.03")
 
-    def faixa_avatar(tag, pad_in, h):
-        """A pessoa nova, ocupando a faixa.
+    def camada_avatar(tag, pad_in, cw, ch):
+        """A pessoa nova, preenchendo o retangulo de destino.
 
-        Faixa do quadro inteiro e o caso facil: o avatar ja nasce em 9:16, entao
-        so escala e preenche. Reduzir e desfocar aqui seria encaixotar o avatar
-        no proprio formato dele -- que foi o que aconteceu quando esta funcao
-        passou a atender tambem os trechos de tela cheia.
-
-        Faixa MAIS BAIXA que o quadro e o caso real: o avatar nao cabe inteiro,
-        entao ele entra reduzido (`--escala`) e o que sobra e preenchido com uma
-        versao desfocada dele mesmo.
+        Retangulo com a mesma proporcao do avatar (o caso de quadro cheio) e so
+        escala. Retangulo mais BAIXO que o quadro — uma faixa — nao cabe inteiro:
+        o avatar entra reduzido (`--escala`) e o que sobra vira desfoque dele
+        mesmo.
         """
-        if h >= H:
-            return f"[{pad_in}]scale={W}:{H},setsar=1[f{tag}];"
-        y = int(h * args.headroom - (cab_av or 0) * escala)
+        if abs(cw / ch - aw / ah) < 0.01:
+            return f"[{pad_in}]scale={cw}:{ch},setsar=1[c{tag}];"
+        sw2 = par(cw * escala)
+        sh2 = par(sw2 * ah / aw)
+        x2 = par((cw - sw2) / 2)
+        y2 = int(ch * args.headroom - (cab_av or 0) * escala * (sw2 / aw))
         return (f"[{pad_in}]split=2[bg{tag}][fg{tag}];"
-                f"[bg{tag}]{fundo_de(h)},setsar=1[blur{tag}];"
-                f"[fg{tag}]scale={sw}:{sh}[small{tag}];"
-                f"[blur{tag}][small{tag}]overlay={x}:{y},crop={W}:{h}:0:0,setsar=1[f{tag}];")
+                f"[bg{tag}]{fundo_de(cw, ch)},setsar=1[blur{tag}];"
+                f"[fg{tag}]scale={sw2}:{sh2}[small{tag}];"
+                f"[blur{tag}][small{tag}]overlay={x2}:{y2},crop={cw}:{ch}:0:0,setsar=1[c{tag}];")
 
-    def faixa_ref(tag, pad_in, f, h, ini, fim, dur):
-        """Uma faixa do original, recortada e esticada pra largura de saida.
-
-        Quando a janela do original e mais curta que o trecho do avatar, o ultimo
-        frame e clonado pra fechar a diferenca -- sem isso o vstack espera pelo
-        ramo curto e o audio desliza dali pra frente.
-
-        A clonagem e por DURACAO EXATA, nunca `stop=-1`. Com padding infinito o
-        ramo nunca termina, o `concat` nunca passa pro trecho seguinte e o ffmpeg
-        escreve pra sempre: um render de 24s chegou a 117 MB e crescendo, a 450%
-        de CPU, sem nunca fechar o arquivo.
-        """
+    def camada_ref(tag, pad_in, de, cw, ch, ini, fim, dur):
+        """Um pedaco do original, recortado e esticado pro retangulo de destino."""
         falta = max(0.0, dur - (fim - ini))
         pad = f"tpad=stop_duration={falta:.3f}:stop_mode=clone," if falta > 0.01 else ""
+        rx, ry = int(de["x0"]), int(de["y0"])
+        rw2, rh2 = max(2, int(de["x1"] - de["x0"])), max(2, int(de["y1"] - de["y0"]))
         return (f"[{pad_in}]trim={ini}:{fim},setpts=PTS-STARTPTS,{FPS}setpts=PTS-STARTPTS,{pad}"
                 f"trim=0:{dur},setpts=PTS-STARTPTS,"
-                f"crop={rw}:{f['y1'] - f['y0']}:0:{f['y0']},"
-                f"scale={W}:{h}:flags=lanczos,setsar=1[f{tag}];")
+                f"crop={rw2}:{rh2}:{rx}:{ry},scale={cw}:{ch}:flags=lanczos,setsar=1[c{tag}];")
 
-    # Cada pad de entrada so pode ser consumido UMA vez em filter_complex: com N
-    # trechos e M faixas de referencia, os dois videos precisam ser fatiados antes.
-    n_ref = sum(1 for t in trechos for f in t["faixas"] if f["fonte"] == "ref")
+    # Cada pad de entrada so pode ser consumido UMA vez: com N trechos e M
+    # camadas de referencia, os dois videos precisam ser fatiados antes.
+    n_ref = sum(1 for t in trechos for c in camadas_de(t) if c["fonte"] == "ref")
     partes = ["[0:v]split=%d%s;" % (len(trechos), "".join(f"[a{i}]" for i in range(len(trechos))))]
     if n_ref:
         partes.append("[1:v]split=%d%s;" % (n_ref, "".join(f"[r{j}]" for j in range(n_ref))))
 
     j = 0
     for i, t in enumerate(trechos):
-        fx, hs = t["faixas"], alturas(t["faixas"])
+        cs = camadas_de(t)
         dur = t["fim_av"] - t["ini_av"]
         fim_ref = t["ini_ref"] + min(dur, max(0.0, t["fim_ref"] - t["ini_ref"]))
-        # O avatar deste trecho e recortado uma vez e distribuido pras faixas.
         partes.append(f"[a{i}]trim={t['ini_av']}:{t['fim_av']},setpts=PTS-STARTPTS,{FPS}"
                       f"setpts=PTS-STARTPTS[av{i}];")
-        for n, (f, h) in enumerate(zip(fx, hs)):
+
+        # Fundo do tamanho do quadro. As camadas sao desenhadas por cima, na
+        # ordem. Com faixas que ladrilham a tela ele nunca aparece; com um cartao
+        # flutuante, ele e o que garante que o resto do quadro exista.
+        partes.append(f"color=c=black:s={W}x{H}:r={afps:.5f}:d={dur:.3f},setsar=1[base{i}];")
+
+        anterior = f"base{i}"
+        for n, c in enumerate(cs):
             tag = f"{i}_{n}"
-            if f["fonte"] == "avatar":
-                partes.append(faixa_avatar(tag, f"av{i}", h))
+            x, y, cw, ch = ret(c["para"])
+            if c["fonte"] == "avatar":
+                partes.append(camada_avatar(tag, f"av{i}", cw, ch))
             else:
-                partes.append(faixa_ref(tag, f"r{j}", f, h, t["ini_ref"], fim_ref, dur))
+                de = c.get("de") or c["para"]
+                partes.append(camada_ref(tag, f"r{j}", de, cw, ch, t["ini_ref"], fim_ref, dur))
                 j += 1
-        if len(fx) == 1:
-            partes.append(f"[f{i}_0]null[p{i}];")
-        else:
-            partes.append("".join(f"[f{i}_{n}]" for n in range(len(fx))) +
-                          f"vstack=inputs={len(fx)},setsar=1[p{i}];")
+            saida = f"p{i}" if n == len(cs) - 1 else f"e{tag}"
+            partes.append(f"[{anterior}][c{tag}]overlay={x}:{y}:shortest=1,setsar=1[{saida}];")
+            anterior = saida
 
     partes.append("".join(f"[p{i}]" for i in range(len(trechos))) +
                   f"concat=n={len(trechos)}:v=1:a=0[vout]")
     fc = "".join(partes)
 
-    # --- preview: o primeiro trecho com mais de uma faixa e o que vale conferir ---
+    # --- preview: o primeiro trecho COMPOSTO (mais de uma camada) ---
     if args.preview:
-        alvo = next((t for t in trechos if len(t["faixas"]) > 1), None)
+        alvo = next((t for t in trechos if len(camadas_de(t)) > 1), None)
         if alvo is None:
             print("sem trecho composto — nada pra comparar no preview")
             return 1
-        fx, hs = alvo["faixas"], alturas(alvo["faixas"])
+        cs = camadas_de(alvo)
         t_av = (alvo["ini_av"] + alvo["fim_av"]) / 2
         t_ref = (alvo["ini_ref"] + alvo["fim_ref"]) / 2
-        n_r = sum(1 for f in fx if f["fonte"] == "ref")
+        n_r = sum(1 for c in cs if c["fonte"] == "ref")
+
         pv = ["[0:v]null[av];", "[1:v]split=%d%s;" % (n_r + 1, "".join(f"[q{m}]" for m in range(n_r + 1)))]
-        m = 0
-        for n, (f, h) in enumerate(zip(fx, hs)):
-            if f["fonte"] == "avatar":
-                pv.append(faixa_avatar(f"p{n}", "av", h))
+        pv.append(f"color=c=black:s={W}x{H}:d=1,setsar=1[basep];")
+        anterior, m = "basep", 0
+        for n, c in enumerate(cs):
+            tag = f"p{n}"
+            x, y, cw, ch = ret(c["para"])
+            if c["fonte"] == "avatar":
+                pv.append(camada_avatar(tag, "av", cw, ch))
             else:
-                pv.append(f"[q{m}]crop={rw}:{f['y1'] - f['y0']}:0:{f['y0']},"
-                          f"scale={W}:{h}:flags=lanczos,setsar=1[fp{n}];")
+                de = c.get("de") or c["para"]
+                rx, ry = int(de["x0"]), int(de["y0"])
+                rw2, rh2 = max(2, int(de["x1"] - de["x0"])), max(2, int(de["y1"] - de["y0"]))
+                pv.append(f"[q{m}]crop={rw2}:{rh2}:{rx}:{ry},scale={cw}:{ch}:flags=lanczos,setsar=1[c{tag}];")
                 m += 1
-        pv.append("".join(f"[fp{n}]" for n in range(len(fx))) +
-                  f"vstack=inputs={len(fx)},scale=540:-2[novo];")
+            saida = "novo0" if n == len(cs) - 1 else f"ep{n}"
+            pv.append(f"[{anterior}][c{tag}]overlay={x}:{y},setsar=1[{saida}];")
+            anterior = saida
+        pv.append("[novo0]scale=540:-2[novo];")
         pv.append(f"[q{n_r}]scale=540:-2,setsar=1[velho];[velho][novo]hstack=inputs=2[cmp]")
+
         r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
                             "-ss", f"{t_av:.3f}", "-i", args.avatar,
                             "-ss", f"{t_ref:.3f}", "-i", args.ref,
