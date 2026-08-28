@@ -1,4 +1,8 @@
 import { join } from "node:path";
+import { sql } from "drizzle-orm";
+import { db } from "../compartilhado/db";
+import { videos } from "../compartilhado/db/schema";
+import { modeloDe } from "../compartilhado/lib/modelos-video";
 import { uploadBuffer } from "../compartilhado/lib/storage";
 import { baixar, comTemp, lerArquivo, run } from "../exec";
 import { SCRIPTS } from "../caminhos";
@@ -32,6 +36,7 @@ export const compor = async (job: Job): Promise<StepResult> =>
     // todo trecho seja tela cheia. A saída curta abaixo é só pro modelo antigo.
     const temComposicao = e.trechos?.some((t) => t.faixas.length > 1) ?? false;
     if (!temComposicao && (!e.topo || !e.corteRef || geometriaInvalida)) {
+      await registrarNoAcervo(job, avatarUrl);
       return {
         patch: { compostoUrl: avatarUrl },
         msg: "original sem split screen — talking head entregue direto",
@@ -63,9 +68,52 @@ export const compor = async (job: Job): Promise<StepResult> =>
     const { publicUrl } = await uploadBuffer(await lerArquivo(saida), "composto.mp4", "video/mp4");
     const { publicUrl: previewUrl } = await uploadBuffer(await lerArquivo(preview), "preview.jpg", "image/jpeg");
 
+    await registrarNoAcervo(job, publicUrl, previewUrl);
+
     return {
       patch: { compostoUrl: publicUrl, previewUrl },
       pause: true,
       msg: `composto na escala ${e.escala} — compare o tamanho da cabeça no preview`,
     };
   });
+
+/**
+ * Registra o vídeo no acervo.
+ *
+ * Fora de `render_jobs` de propósito: a fila é limpa quando enche de teste, e
+ * junto ia embora o histórico do que foi produzido — os arquivos ficavam no
+ * Storage sem nada apontando pra eles.
+ *
+ * Uma linha por rodada: recompor numa escala nova ATUALIZA o registro em vez de
+ * empilhar um vídeo novo, senão a galeria enche de versões da mesma coisa.
+ *
+ * Falhar aqui não pode derrubar o passo: a composição já está pronta e paga, e
+ * perder o registro é menos grave que perder o vídeo.
+ */
+async function registrarNoAcervo(job: Job, url: string, previewUrl?: string): Promise<void> {
+  try {
+    const [w] = await db.execute<{ workspace_id: string; duracao: number | null }>(sql`
+      SELECT workspace_id, NULL::real AS duracao FROM render_jobs WHERE id = ${job.id}
+    `);
+    if (!w) return;
+
+    await db
+      .insert(videos)
+      .values({
+        workspaceId: w.workspace_id,
+        jobId: job.id,
+        nome: job.name,
+        url,
+        previewUrl,
+        refVideoUrl: job.refVideoUrl,
+        modelo: modeloDe(job.manifest.modeloVideo).rotulo,
+        custoCents: job.costCents,
+      })
+      .onConflictDoUpdate({
+        target: videos.jobId,
+        set: { url, previewUrl, custoCents: job.costCents, atualizadoEm: new Date() },
+      });
+  } catch (e) {
+    console.error(`[${job.name}] nao registrei no acervo: ${(e as Error).message}`);
+  }
+}

@@ -1,5 +1,5 @@
 import {
-  pgTable, text, timestamp, boolean, integer, jsonb, uuid, uniqueIndex, index,
+  pgTable, text, timestamp, boolean, integer, real, jsonb, uuid, uniqueIndex, index,
 } from "drizzle-orm/pg-core";
 import type { ModeloVideoKey } from "../lib/modelos-video";
 
@@ -385,3 +385,33 @@ export const workerHeartbeat = pgTable("worker_heartbeat", {
   /** Último passo que ele tocou — ajuda a saber se está vivo mas travado. */
   ultimoPasso: text("ultimo_passo"),
 });
+
+/**
+ * Os vídeos prontos — o acervo, separado da fila.
+ *
+ * `render_jobs` é descartável: quando a fila enche de teste ela é limpa, e isso
+ * levava junto o histórico do que foi produzido. Os arquivos continuavam no
+ * Storage sem nada apontando pra eles. Aqui o vídeo sobrevive à rodada que o
+ * gerou — por isso `jobId` não tem chave estrangeira.
+ */
+export const videos = pgTable(
+  "videos",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    /** A rodada que o produziu. Sem FK: ela pode ser apagada e o vídeo fica. */
+    jobId: uuid("job_id"),
+    nome: text("nome").notNull(),
+    url: text("url").notNull(),
+    previewUrl: text("preview_url"),
+    /** O criativo de referência, pra comparar lado a lado depois. */
+    refVideoUrl: text("ref_video_url"),
+    /** Qual modelo gerou os clipes — é o dado do teste. */
+    modelo: text("modelo"),
+    duracaoS: real("duracao_s"),
+    custoCents: integer("custo_cents").default(0).notNull(),
+    criadoEm: timestamp("criado_em", { withTimezone: true }).defaultNow().notNull(),
+    atualizadoEm: timestamp("atualizado_em", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("videos_recentes_idx").on(t.criadoEm)],
+);
