@@ -272,7 +272,19 @@ export type RenderManifest = {
    *   - `llm`    — proposto pelo escritor de prompt, ainda a conferir ou já aceito
    *   - `humano` — escrito ou corrigido pelo Gusta; não passa pelo portão de novo
    */
-  prompts?: { n: number; prompt: string; origem: "llm" | "humano" }[];
+  prompts?: {
+    n: number;
+    prompt: string;
+    origem: "llm" | "humano";
+    /**
+     * A conversa que produziu este prompt: o que foi mandado pra LLM e por qual
+     * modelo. Guardado pra conferência — quando o prompt sai estranho, a
+     * pergunta é se a LLM interpretou mal ou se o insumo já chegou errado
+     * (nota de casting vazia, fala fatiada no lugar errado). Ausente quando o
+     * prompt foi escrito à mão: aí não houve conversa.
+     */
+    enviado?: { sistema: string; usuario: string; modelo: string };
+  }[];
   casting?: { nota: string; promptBase?: string };
   audioOriginalUrl?: string;
   imagemBaseUrl?: string;

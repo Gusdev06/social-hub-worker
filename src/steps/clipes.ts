@@ -21,13 +21,14 @@ const promptDoClipe = async (
   const manual = (job.manifest.prompts ?? []).find((p) => p.n === alvo.n)?.prompt?.trim();
   if (manual) return manual;
 
-  return escreverPromptClipe({
+  const { prompt } = await escreverPromptClipe({
     nota: job.manifest.casting?.nota ?? "",
     texto: alvo.texto,
     n: alvo.n,
     total,
     formatoDialogo,
   });
+  return prompt;
 };
 
 /**
@@ -147,7 +148,7 @@ export const clipes = async (job: Job): Promise<StepResult> =>
     // Prompt escrito à mão não passa pelo portão — quem escreveu já conferiu.
     const definido = (job.manifest.prompts ?? []).find((p) => p.n === proximo.n)?.prompt?.trim();
     if (!definido) {
-      const proposto = await escreverPromptClipe({
+      const { prompt: proposto, enviado } = await escreverPromptClipe({
         nota: job.manifest.casting?.nota ?? "",
         texto: proximo.texto,
         n: proximo.n,
@@ -159,7 +160,10 @@ export const clipes = async (job: Job): Promise<StepResult> =>
         patch: {
           prompts: [
             ...(job.manifest.prompts ?? []).filter((p) => p.n !== proximo.n),
-            { n: proximo.n, prompt: proposto, origem: "llm" as const },
+            // `enviado` viaja junto: na hora de conferir, saber o que a LLM
+            // RECEBEU é o que separa "ela interpretou mal" de "o insumo já
+            // estava errado".
+            { n: proximo.n, prompt: proposto, origem: "llm" as const, enviado },
           ].sort((a, b) => a.n - b.n),
         },
         // Continua no `clipes`: o passo não terminou, só parou pra conferência.

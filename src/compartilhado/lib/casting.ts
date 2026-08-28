@@ -89,6 +89,19 @@ A nota de casting vai em português, 5 linhas. O prompt vai em inglês.`;
  * melhorar a copy no meio do caminho contamina o teste e o Gusta perde a
  * leitura do resultado.
  */
+/**
+ * O prompt do clipe e a conversa que o produziu.
+ *
+ * O `enviado` existe pra conferência: quando o prompt sai estranho, a pergunta
+ * é se a LLM interpretou mal ou se o INSUMO já estava errado — nota de casting
+ * vazia, fala fatiada no lugar errado, formato de diálogo do modelo trocado.
+ * Sem guardar o que foi mandado, essa distinção só sairia relendo o código.
+ */
+export type PromptDeClipe = {
+  prompt: string;
+  enviado: { sistema: string; usuario: string; modelo: string };
+};
+
 export async function escreverPromptClipe({
   nota, texto, n, total, formatoDialogo,
 }: {
@@ -98,7 +111,7 @@ export async function escreverPromptClipe({
   total: number;
   /** Como este modelo espera receber a fala. */
   formatoDialogo: string;
-}): Promise<string> {
+}): Promise<PromptDeClipe> {
   const sistema = `Você escreve prompts de clipe para um modelo de image-to-video com áudio nativo.
 
 Formato, nesta ordem:
@@ -113,12 +126,15 @@ Regras:
 - Registro de quem fala baixo sentado em casa, nunca de apresentador.
 Responda só com o prompt, sem preâmbulo.`;
 
+  const usuario = `NOTA DE CASTING (lei, não altere):\n${nota}\n\nClipe ${n} de ${total}. Fala literal:\n"${texto}"`;
+
   try {
-    return await escrever({
+    const prompt = await escrever({
       system: sistema,
-      conteudo: `NOTA DE CASTING (lei, não altere):\n${nota}\n\nClipe ${n} de ${total}. Fala literal:\n"${texto}"`,
+      conteudo: usuario,
       onde: `prompt do clipe ${n}`,
     });
+    return { prompt, enviado: { sistema, usuario, modelo: LLM_MODEL } };
   } catch (e) {
     // Recusa é diferente de erro técnico e merece mensagem própria: não adianta
     // "tentar de novo", e a saída é mudar a fala do clipe.
