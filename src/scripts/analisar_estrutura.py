@@ -211,15 +211,43 @@ def mesma_estrutura(a, b, tol, min_frac=0.15):
     return all(abs(x - y) <= tol for x, y in zip(pa, pb))
 
 
+# Abaixo disto a faixa e acessorio (barra, borda, tarja), nunca o quadro da
+# pessoa -- serve pra nao confundir uma tarja colorida com pele.
+MIN_PAINEL = 0.25
+
+
 def rotular(f, h):
-    """Palpite do papel de cada faixa. E palpite -- confirme olhando um frame."""
-    if f["vermelhidao"] > 25 and f["fracao"] < 0.25:
+    """Palpite do papel de UMA faixa, sem olhar as vizinhas."""
+    if f["vermelhidao"] > 25 and f["fracao"] < MIN_PAINEL:
         return "barra de caption / lettering"
     if f["desvio_horizontal"] < 12:
         return "faixa lisa (borda ou fundo chapado)"
-    if f["fracao"] > 0.55:
-        return "painel principal"
     return "painel"
+
+
+def rotular_faixas(faixas, h):
+    """Rotula a PILHA e elege UMA faixa como o quadro da pessoa.
+
+    A regra antiga elegia por tamanho: `fracao > 0.55`. Isso so descreve
+    criativo em que a pessoa domina a tela. Num split screen meio a meio -- 49,4%
+    pra pessoa e 50,6% pro gravador de tela -- nenhuma faixa passava do corte,
+    todas viravam "painel", e a remontagem nao tinha como saber o que trocar:
+    entregava o talking head puro, sem edicao nenhuma.
+
+    O que separa a pessoa do resto nao e tamanho, e PELE. A vermelhidao ja e
+    medida por faixa (e ja e usada pra achar barra de caption): no criativo que
+    expos o problema, a faixa da pessoa deu +15,5 e as do gravador de tela deram
+    -15,5, -8 e -5. O piso de tamanho continua valendo pra uma tarja colorida
+    pequena nao ganhar da pessoa no quesito vermelhidao.
+    """
+    for f in faixas:
+        f["papel"] = rotular(f, h)
+
+    candidatas = [f for f in faixas
+                  if f["papel"] == "painel" and f["fracao"] >= MIN_PAINEL]
+    if candidatas:
+        max(candidatas, key=lambda f: f["vermelhidao"])["papel"] = "painel principal"
+    return faixas
 
 
 def main():
@@ -264,8 +292,7 @@ def main():
     for s in segmentos:
         s["duracao"] = round(s["fim"] - s["inicio"], 3)
         s["layout"] = "dividido" if len(s["faixas"]) > 1 else "tela cheia"
-        for f in s["faixas"]:
-            f["papel"] = rotular(f, info["altura"])
+        rotular_faixas(s["faixas"], info["altura"])
 
     cortes_reais = [s["inicio"] for s in segmentos[1:]]
     descartados = [c for c in cortes if c not in cortes_reais]
