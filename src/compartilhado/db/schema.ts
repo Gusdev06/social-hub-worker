@@ -327,7 +327,22 @@ export type RenderManifest = {
      */
     trechos?: {
       ini_av: number; fim_av: number; ini_ref: number; fim_ref: number;
-      faixas: { y0: number; y1: number; fonte: "avatar" | "ref" }[];
+      /**
+       * As CAMADAS do trecho, desenhadas de baixo pra cima. Cada uma diz de onde
+       * vem, que retângulo recortar (`de`) e em que retângulo desenhar (`para`),
+       * ambos em pixels da REFERÊNCIA.
+       *
+       * Faixa horizontal é o caso particular de largura total; um cartão do app
+       * flutuando no meio da tela é um retângulo qualquer. É esse formato que
+       * permite descrever uma edição nova sem tocar em código.
+       */
+      camadas?: {
+        fonte: "avatar" | "ref";
+        de?: { x0: number; y0: number; x1: number; y1: number };
+        para: { x0: number; y0: number; x1: number; y1: number };
+      }[];
+      /** Formato antigo, só de tiras horizontais. Convertido na montagem. */
+      faixas?: { y0: number; y1: number; fonte: "avatar" | "ref" }[];
     }[];
   };
   log?: { at: string; step: string; msg: string }[];

@@ -34,7 +34,10 @@ export const compor = async (job: Job): Promise<StepResult> =>
 
     // Com a receita pronta, o compositor sempre tem o que montar — mesmo que
     // todo trecho seja tela cheia. A saída curta abaixo é só pro modelo antigo.
-    const temComposicao = e.trechos?.some((t) => t.faixas.length > 1) ?? false;
+    // "Tem o que compor" = algum trecho com mais de uma camada. Uma camada só é
+    // o avatar em quadro cheio, que não precisa de composição nenhuma.
+    const temComposicao =
+      e.trechos?.some((t) => (t.camadas?.length ?? t.faixas?.length ?? 0) > 1) ?? false;
     if (!temComposicao && (!e.topo || !e.corteRef || geometriaInvalida)) {
       await registrarNoAcervo(job, avatarUrl);
       return {

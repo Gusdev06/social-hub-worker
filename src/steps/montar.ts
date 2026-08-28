@@ -56,8 +56,9 @@ function topoDoPainel(est?: RenderEstrutura): number {
   return painel.y1 >= (est?.altura ?? Infinity) ? 0 : painel.y1;
 }
 
-type Faixa = { y0: number; y1: number; fonte: "avatar" | "ref" };
-type Trecho = { ini_av: number; fim_av: number; ini_ref: number; fim_ref: number; faixas: Faixa[] };
+type Ret = { x0: number; y0: number; x1: number; y1: number };
+type Camada = { fonte: "avatar" | "ref"; de?: Ret; para: Ret };
+type Trecho = { ini_av: number; fim_av: number; ini_ref: number; fim_ref: number; camadas: Camada[] };
 
 /**
  * A receita de remontagem, tirada da análise — sem layout fixo.
@@ -87,23 +88,28 @@ function planoDeRemontagem(est: RenderEstrutura, duracaoAvatar: number): Trecho[
     // cobrir a tela inteira, então as fronteiras são esticadas: cada faixa vai
     // até onde a próxima começa, a primeira começa em 0 e a última fecha embaixo.
     const principais = ordenadas.filter((f) => f.papel.includes("painel principal"));
-    const faixas: Faixa[] =
+
+    // A análise só enxerga tiras horizontais, então o que ela produz são camadas
+    // de largura total. Um recorte marcado à mão no painel entra depois, no
+    // mesmo formato, com um retângulo qualquer.
+    const camadas: Camada[] =
       ordenadas.length && principais.length === 1
-        ? ordenadas.map((f, n) => ({
-            y0: n === 0 ? 0 : ordenadas[n].y0,
-            y1: n === ordenadas.length - 1 ? est.altura : ordenadas[n + 1].y0,
-            fonte: f === principais[0] ? ("avatar" as const) : ("ref" as const),
-          }))
+        ? ordenadas.map((f, n) => {
+            const y0 = n === 0 ? 0 : ordenadas[n].y0;
+            const y1 = n === ordenadas.length - 1 ? est.altura : ordenadas[n + 1].y0;
+            const ret = { x0: 0, y0, x1: est.largura, y1 };
+            return { fonte: f === principais[0] ? ("avatar" as const) : ("ref" as const), de: ret, para: ret };
+          })
         // Sem um "painel principal" claro não dá pra saber qual faixa é a pessoa.
         // Entregar o avatar em tela cheia é honesto; inventar geometria não é.
-        : [{ y0: 0, y1: est.altura, fonte: "avatar" as const }];
+        : [{ fonte: "avatar" as const, para: { x0: 0, y0: 0, x1: est.largura, y1: est.altura } }];
 
     return {
       ini_av: i === 0 ? 0 : s.inicio * fator,
       fim_av: i === segs.length - 1 ? duracaoAvatar : s.fim * fator,
       ini_ref: s.inicio,
       fim_ref: s.fim,
-      faixas,
+      camadas,
     };
   });
 
@@ -111,7 +117,7 @@ function planoDeRemontagem(est: RenderEstrutura, duracaoAvatar: number): Trecho[
   // ffmpeg e menos emendas de concat, sem mudar uma linha do resultado.
   return trechos.reduce<Trecho[]>((acc, t) => {
     const ult = acc.at(-1);
-    const igual = ult && JSON.stringify(ult.faixas) === JSON.stringify(t.faixas);
+    const igual = ult && JSON.stringify(ult.camadas) === JSON.stringify(t.camadas);
     if (igual) { ult!.fim_av = t.fim_av; ult!.fim_ref = t.fim_ref; return acc; }
     return [...acc, t];
   }, []);
