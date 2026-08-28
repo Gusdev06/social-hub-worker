@@ -1,0 +1,23 @@
+{
+  "name": "social-hub-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Esteira de producao de video do social-hub. Roda fora da maquina do dono.",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx --env-file=.env src/index.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/storage-js": "^2.112.4",
+    "drizzle-orm": "^0.44.0",
+    "postgres": "^3.4.5",
+    "tsx": "^4.19.2",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
