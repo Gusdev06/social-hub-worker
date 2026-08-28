@@ -28,7 +28,70 @@ analisar → roteiro → imagem_base → clipes → montar → compor → public
 `clipes` é o passo caro. Ele para pra você conferir o prompt antes de cada
 geração, e é isso que impede um prompt errado virar dinheiro.
 
-## Subir na VPS da Hostinger
+## Subir no EasyPanel
+
+É o caminho usado aqui. O EasyPanel constrói direto do GitHub — não use o
+`docker-compose.yml`, ele é ignorado (serve pro caminho de Docker puro, mais
+abaixo).
+
+**1. Criar o serviço**
+
+Project → **+ Service** → **App**. Nome: `esteira`.
+
+**2. Source**
+
+- Provider: **GitHub** (o repo é público, não precisa conectar conta)
+- Owner `Gusdev06` · Repository `social-hub-worker` · Branch `main`
+
+**3. Build**
+
+Método: **Dockerfile**, caminho `Dockerfile`. Isto é obrigatório — no padrão
+(Nixpacks) a imagem sai sem ffmpeg e sem numpy, e o preflight derruba o
+container na largada com "faltam ferramentas no PATH".
+
+**4. Environment**
+
+Cole as quatro. Saem do `.env.local` do painel:
+
+```
+DATABASE_URL=            # use a string do POOLER (porta 6543)
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+WAVESPEED_API_KEY=
+```
+
+**5. Deploy**
+
+Botão **Deploy**. O primeiro build leva alguns minutos (apt + npm ci). Nos logs
+espere:
+
+```
+worker-… de pé · passos prontos: analisar, roteiro, …
+api de saúde na porta 8080
+```
+
+**6. O que o compose fazia e agora é você quem configura**
+
+O `docker-compose.yml` trazia proteções que o EasyPanel não lê. Os equivalentes:
+
+| proteção | onde fica no EasyPanel |
+|---|---|
+| teto de CPU e memória | aba **Resources** — sem isso um render ocupa a VPS inteira |
+| reinício automático | é o padrão do EasyPanel, não precisa mexer |
+| health check | aba **Advanced**, caminho `/saude`, porta `8080` |
+| rotação de log | gerenciada pelo EasyPanel |
+
+**Domínio é opcional.** A esteira não recebe chamada de ninguém — ela lê a fila
+no Postgres. Só publique `/saude` e `/status` se quiser olhar de fora, e nesse
+caso ponha senha: a API não tem autenticação e a fila revela quanto você gasta.
+
+**Atualizar:** cada push na `main` → botão **Deploy** (ou ligue o auto-deploy no
+Source). Rodada em andamento não se perde: o passo interrompido volta pra fila e
+é retomado quando o lease vence.
+
+## Subir com Docker puro (sem EasyPanel)
+
+### Pela linha de comando
 
 **Não funciona em hospedagem compartilhada.** Precisa de ffmpeg, python+numpy e
 um processo vivo o tempo todo — nada disso existe em plano compartilhado. Use um
@@ -47,7 +110,7 @@ Alguns templates da Hostinger já vêm com Docker — `docker --version` respond
 ### 2. Código e variáveis
 
 ```bash
-git clone SEU_REPO social-hub-worker && cd social-hub-worker
+git clone https://github.com/Gusdev06/social-hub-worker.git && cd social-hub-worker
 cp .env.example .env
 nano .env          # cole os valores do .env.local do painel
 ```
