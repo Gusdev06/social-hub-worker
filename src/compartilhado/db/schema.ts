@@ -415,3 +415,27 @@ export const videos = pgTable(
   },
   (t) => [index("videos_recentes_idx").on(t.criadoEm)],
 );
+
+/**
+ * Avatares salvos pra reuso.
+ *
+ * Guarda a imagem E a nota de casting. A nota pesa tanto quanto a foto: ela
+ * reaparece literalmente em todo prompt de clipe e é o que faz o modelo
+ * reconhecer a mesma pessoa entre um clipe e outro. Reusar só a imagem daria o
+ * rosto certo no clipe 1 e outra pessoa no clipe 3.
+ */
+export const avatares = pgTable(
+  "avatares",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    nome: text("nome").notNull(),
+    imagemUrl: text("imagem_url").notNull(),
+    nota: text("nota").notNull(),
+    /** O prompt que gerou a imagem — pra regerar variações do mesmo personagem. */
+    prompt: text("prompt"),
+    usos: integer("usos").default(0).notNull(),
+    criadoEm: timestamp("criado_em", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("avatares_recentes_idx").on(t.criadoEm)],
+);

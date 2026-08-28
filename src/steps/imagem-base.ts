@@ -23,6 +23,17 @@ function ratioDe(l = 1080, a = 1920): string {
  * pausa, mesmo quando a imagem sai boa de primeira.
  */
 export const imagemBase = async (job: Job): Promise<StepResult> => {
+  // Avatar reusado: a rodada já nasceu com o rosto e a nota de casting vindos do
+  // acervo. Gerar aqui daria uma pessoa DIFERENTE por cima da que foi escolhida
+  // — e ainda cobraria por isso. Pausa mesmo assim, porque a aprovação do rosto
+  // é o portão que protege o crédito de vídeo lá na frente.
+  if (job.manifest.imagemBaseUrl && job.manifest.casting?.nota) {
+    return {
+      pause: true,
+      msg: "avatar reusado do acervo — confirme e siga",
+    };
+  }
+
   const est = job.manifest.estrutura;
   const ratio = est ? ratioDe(est.largura, est.altura) : "9:16";
 
