@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Fatia um roteiro em clipes de ~55-60 silabas (o ritmo natural de fala
-que o Kling sustenta em ~10s), sem nunca cortar no meio de uma frase.
+que o Kling sustenta em ~10s), emendando em fronteira de frase.
+
+Quando nao existe fronteira de frase onde emendar -- roteiro de anuncio em
+periodo corrido, transcricao que voltou sem pontuacao -- o corte desce pra
+oracao e, no limite, pra palavra. Ver atomizar().
 
   python3 chunk_roteiro.py roteiro.txt --lang pt
   python3 chunk_roteiro.py roteiro.txt --lang en --json
@@ -53,10 +57,78 @@ def contar_silabas(texto: str, lang: str) -> int:
 
 
 def dividir_frases(texto: str) -> list[str]:
-    """Quebra em frases. Fronteira de frase e a unica emenda aceitavel."""
+    """Quebra em frases. Fronteira de frase e a emenda preferida."""
     texto = " ".join(texto.split())
     partes = re.split(r"(?<=[.!?…])\s+", texto)
     return [p.strip() for p in partes if p.strip()]
+
+
+# Preco de emendar dois clipes DEPOIS de cada tipo de unidade. Fronteira de
+# frase e de graca; as outras o fatiador so paga onde nao existe alternativa.
+# A escala e a do custo de tamanho ((soma - alvo)**2), entao 300 significa
+# "prefiro um clipe 17 silabas fora do alvo a cortar numa virgula".
+EMENDA_FRASE = 0.0
+EMENDA_CLAUSULA = 300.0
+EMENDA_PALAVRA = 3000.0
+
+# Folga sobre o teto de 15s. O teto sai de uma estimativa de ritmo em cima de
+# uma contagem heuristica de silabas -- passar 10% dele e fala 10% mais rapida,
+# nao clipe cortado. Sem essa folga o fatiador partia uma frase inteira ao meio
+# para economizar 3 silabas.
+FOLGA_TETO = 0.12
+
+
+def _por_palavra(trecho: str, lang: str) -> list[tuple[str, int, float]]:
+    return [(p, contar_silabas(p, lang), EMENDA_PALAVRA) for p in trecho.split()]
+
+
+def _por_clausula(frase: str, lang: str, teto: int) -> list[tuple[str, int, float]]:
+    partes = [p for p in re.split(r"(?<=[,;:—–-])\s+", frase) if p.strip()]
+    if len(partes) < 2:
+        return _por_palavra(frase, lang)
+
+    unidades: list[tuple[str, int, float]] = []
+    for p in partes:
+        s = contar_silabas(p, lang)
+        if s <= teto:
+            unidades.append((p, s, EMENDA_CLAUSULA))
+            continue
+        # Oracao que sozinha estoura: desce pra palavra, mas a emenda no FIM
+        # dela continua valendo o preco de oracao.
+        sub = _por_palavra(p, lang)
+        unidades.extend(sub[:-1])
+        t, ss, _ = sub[-1]
+        unidades.append((t, ss, EMENDA_CLAUSULA))
+    return unidades
+
+
+def atomizar(texto: str, lang: str, teto: int) -> list[tuple[str, int, float]]:
+    """Menores pedacos que o fatiador pode juntar, com o preco da emenda depois.
+
+    Cortar so em fronteira de frase e o certo -- enquanto existe fronteira de
+    frase. Roteiro de anuncio vem em periodo corrido ("here's how to see the
+    messages from your boyfriend, girlfriend, husband or wife from your phone
+    and the coolest thing is...") e ai nao existe nenhuma: o roteiro inteiro
+    virava UM clipe, o Kling devolveria fala acelerada e o passo morria pedindo
+    correcao manual -- 75 e 108 silabas em 15s, duas rodadas na mesma semana.
+
+    Entao a frase que sozinha estoura o teto e quebrada em oracao (virgula,
+    ponto-e-virgula, travessao) e, se a oracao ainda estourar, em palavra. Cada
+    nivel custa mais caro que o de cima, entao o fatiador so desce onde o de
+    cima nao resolvia -- um roteiro bem pontuado sai cortado exatamente como
+    saia antes.
+    """
+    atomos: list[tuple[str, int, float]] = []
+    for frase in dividir_frases(texto):
+        s = contar_silabas(frase, lang)
+        if s <= teto:
+            atomos.append((frase, s, EMENDA_FRASE))
+            continue
+        sub = _por_clausula(frase, lang, teto)
+        atomos.extend(sub[:-1])
+        t, ss, _ = sub[-1]
+        atomos.append((t, ss, EMENDA_FRASE))  # o fim da frase continua fronteira de frase
+    return atomos
 
 
 def duracao_kling(silabas: int, ritmo: float) -> int:
@@ -65,49 +137,57 @@ def duracao_kling(silabas: int, ritmo: float) -> int:
 
 
 def fatiar(texto: str, lang: str, ritmo: float) -> list[dict]:
-    """Distribui as frases em N clipes equilibrados.
+    """Distribui as unidades do roteiro em N clipes equilibrados.
 
     Fatiar de forma gulosa deixa um clipe-anao no fim (ex: 46/61/21), e um
     clipe de 4s ao lado de um de 11s da um corte que salta na montagem.
     Entao fixamos N pelo total e miramos total/N em cada clipe: as emendas
-    continuam so em fronteira de frase, mas os pedacos saem parelhos.
+    caem no melhor lugar disponivel, mas os pedacos saem parelhos.
     """
-    frases = [(f, contar_silabas(f, lang)) for f in dividir_frases(texto)]
-    if not frases:
-        return []
-
-    total = sum(s for _, s in frases)
     teto = int(DUR_MAX * ritmo)   # um clipe nao pode passar de 15s de fala
+    duro = int(teto * (1 + FOLGA_TETO))
     piso = int(DUR_MIN * ritmo)   # nem ficar abaixo de 3s
 
+    # Piso no teto que manda atomizar: com --ref-dur absurdo (roteiro de tres
+    # palavras num video de 40s) o teto vira 2 silabas e a frase inteira desceria
+    # pra palavra a toa. Abaixo disso o ritmo estimado e que esta errado.
+    atomos = atomizar(texto, lang, max(teto, 24))
+    if not atomos:
+        return []
+
+    total = sum(s for _, s, _ in atomos)
     n_clipes = max(1, round(total / SILABAS_ALVO))
-    while n_clipes < len(frases) and total / n_clipes > teto:
+    while n_clipes < len(atomos) and total / n_clipes > teto:
         n_clipes += 1
-    n_clipes = min(n_clipes, len(frases))
+    n_clipes = min(n_clipes, len(atomos))
     alvo = total / n_clipes
 
-    # Particao otima por programacao dinamica: divide as frases em n_clipes
-    # grupos CONTIGUOS (a emenda so cai em fronteira de frase) minimizando o
-    # desvio quadratico em relacao ao alvo. Guloso deixava clipe-anao ao lado
-    # de clipe-teto (46/23/59), e corte de 6s colado num de 15s salta na
-    # montagem. Com poucas frases o custo do DP e irrisorio.
-    n = len(frases)
+    # Particao otima por programacao dinamica: divide as unidades em n_clipes
+    # grupos CONTIGUOS minimizando desvio em relacao ao alvo MAIS o preco das
+    # emendas. Guloso deixava clipe-anao ao lado de clipe-teto (46/23/59), e
+    # corte de 6s colado num de 15s salta na montagem. Com poucas unidades o
+    # custo do DP e irrisorio.
+    n = len(atomos)
     pref = [0] * (n + 1)
-    for i, (_, s) in enumerate(frases):
+    for i, (_, s, _e) in enumerate(atomos):
         pref[i + 1] = pref[i] + s
 
     def custo(i: int, j: int) -> float:
-        """Custo do grupo frases[i:j]."""
+        """Custo do grupo atomos[i:j]."""
         soma = pref[j] - pref[i]
         pen = 0.0
-        if soma > teto:                      # estoura o Kling: proibido na pratica
-            pen += 1e6 * (soma - teto)
+        if soma > teto:                      # fala comprimida: cresce rapido
+            pen += 30 * (soma - teto) ** 2
+        if soma > duro:                      # estoura o Kling: proibido na pratica
+            pen += 1e6 * (soma - duro)
         if soma < piso and j - i < n:        # curto demais para virar clipe
             pen += 1e3 * (piso - soma)
+        if j < n:                            # onde este clipe emenda no proximo
+            pen += atomos[j - 1][2]
         return (soma - alvo) ** 2 + pen
 
     INF = float("inf")
-    # dp[k][j] = melhor custo usando k grupos para as j primeiras frases
+    # dp[k][j] = melhor custo usando k grupos para as j primeiras unidades
     dp = [[INF] * (n + 1) for _ in range(n_clipes + 1)]
     corte = [[0] * (n + 1) for _ in range(n_clipes + 1)]
     dp[0][0] = 0.0
@@ -129,7 +209,7 @@ def fatiar(texto: str, lang: str, ritmo: float) -> list[dict]:
     limites.reverse()
 
     clipes = [
-        (" ".join(f for f, _ in frases[i:j]), pref[j] - pref[i])
+        (" ".join(t for t, _, _ in atomos[i:j]), pref[j] - pref[i])
         for i, j in limites
     ]
 

@@ -4,12 +4,16 @@ import { escrever } from "./llm";
 const norm = (s: string) =>
   s.toLowerCase().replace(/['‘’ʼ]/g, "").replace(/[^\p{L}\p{N}]/gu, "");
 
+/** Uma fronteira de frase a cada ~30 palavras já dá ao fatiador onde cortar. */
+const PALAVRAS_POR_FRASE = 30;
+
 /**
  * Devolve pontuação e maiúscula à transcrição crua do Whisper.
  *
- * Por que é necessário: o Whisper entrega um bloco corrido sem ponto, e o
- * fatiador de roteiro corta em fronteira de frase — sem pontuação ele não tem
- * onde cortar e empilha o roteiro inteiro num clipe só.
+ * Por que existe: o Whisper às vezes entrega um bloco corrido sem ponto, e o
+ * fatiador de roteiro prefere emendar em fronteira de frase. Sem nenhuma
+ * fronteira ele desce pra oração e pra palavra — funciona, mas o corte cai em
+ * lugar pior. Pontuar antes é o que mantém o corte na frase.
  *
  * Por que não dá pra confiar na saída do modelo: o roteiro é o ativo testado.
  * Pedindo "devolva o mesmo texto pontuado", o modelo silenciosamente come uma
@@ -19,23 +23,48 @@ const norm = (s: string) =>
  * Então o texto final é RECONSTRUÍDO a partir das palavras da transcrição, e do
  * modelo se importa apenas a pontuação. Palavra trocada deixa de ser um risco
  * detectável e passa a ser impossível.
+ *
+ * `aviso` é o que a rodada mostra na tela quando o resultado saiu abaixo do
+ * ideal: vazio significa pontuação confiável.
  */
-export async function restaurarPontuacao(cru: string): Promise<{ texto: string; alinhadas: number }> {
-  const pontuado = await escrever({
-    system:
-      "Você recebe uma transcrição automática sem pontuação. Devolva o MESMO texto com " +
-      "pontuação e maiúsculas corretas.\n\n" +
-      "PROIBIDO: trocar, acrescentar ou remover qualquer palavra; corrigir gramática; " +
-      "reescrever; traduzir. Só sinal de pontuação e caixa mudam.\n" +
-      "Responda só com o texto.",
-    conteudo: cru,
-    // Modelo de raciocínio: o pensamento sai do mesmo orçamento, e transcrição
-    // de criativo de 40s já passa de 150 palavras. Apertado aqui volta vazio.
-    maxTokens: 8000,
-    onde: "pontuação do roteiro",
-  });
+export async function restaurarPontuacao(cru: string): Promise<{ texto: string; aviso: string }> {
+  const total = cru.split(/\s+/).filter(Boolean).length;
+  const fronteiras = (cru.match(/[.!?…]/g) ?? []).length;
 
-  return aplicarPontuacao(cru, pontuado);
+  // O Whisper MUITAS VEZES já devolve pontuado. Quando devolve, chamar o modelo
+  // é só custo e risco: esta é a única etapa da esteira capaz de encostar numa
+  // palavra do ativo testado.
+  if (fronteiras * PALAVRAS_POR_FRASE >= total) return { texto: cru, aviso: "" };
+
+  let pontuado: string;
+  try {
+    pontuado = await escrever({
+      system:
+        "Você recebe uma transcrição automática sem pontuação. Devolva o MESMO texto com " +
+        "pontuação e maiúsculas corretas.\n\n" +
+        "PROIBIDO: trocar, acrescentar ou remover qualquer palavra; corrigir gramática; " +
+        "reescrever; traduzir. Só sinal de pontuação e caixa mudam.\n" +
+        "Responda só com o texto.",
+      conteudo: cru,
+      // Modelo de raciocínio: o pensamento sai do mesmo orçamento, e transcrição
+      // de criativo de 40s já passa de 150 palavras. Apertado aqui volta vazio.
+      maxTokens: 8000,
+      onde: "pontuação do roteiro",
+    });
+  } catch (erro) {
+    // Pontuação é conforto; a transcrição é o ativo. O fatiador sabe descer pra
+    // oração e, no limite, pra palavra quando não há ponto nenhum (ver
+    // `atomizar` em chunk_roteiro.py), então falha aqui piora o corte — não
+    // derruba a rodada, que ainda para pra aprovação com este aviso na tela.
+    const causa = erro instanceof Error ? erro.message : String(erro);
+    return { texto: cru, aviso: `pontuação não restaurada (${causa}) — corte por oração` };
+  }
+
+  const { texto, alinhadas } = aplicarPontuacao(cru, pontuado);
+  return {
+    texto,
+    aviso: alinhadas < total ? `${total - alinhadas} palavra(s) sem pontuação alinhada` : "",
+  };
 }
 
 /**
@@ -67,10 +96,12 @@ export function aplicarPontuacao(cru: string, pontuado: string): { texto: string
 
     let palavra = original;
     if (achou >= 0) {
-      const doModelo = modelo[achou];
-      // Só o que vem DEPOIS da palavra é importado — e só sinal de pontuação.
-      const cauda = doModelo.match(/[.,!?;:…]+$/)?.[0] ?? "";
-      palavra = original + cauda;
+      // Só o que vem DEPOIS da palavra é importado, e só sinal de pontuação: as
+      // letras são sempre as da transcrição. Quando o Whisper já tinha pontuado
+      // aquela palavra, a do modelo SUBSTITUI a dele — somar as duas escrevia
+      // "do seu celular.." e "namorada,," no roteiro que vai pro Kling.
+      const cauda = modelo[achou].match(/[.,!?;:…]+$/)?.[0];
+      palavra = cauda ? original.replace(/[.,!?;:…]+$/, "") + cauda : original;
       j = achou + 1;
       alinhadas++;
     }

@@ -40,13 +40,13 @@ export const roteiro = async (job: Job): Promise<StepResult> =>
       const cru = saida?.text?.trim();
       if (!cru) throw new Error("whisper não devolveu transcrição");
 
-      // O Whisper entrega um bloco corrido sem ponto; o fatiador corta em
-      // fronteira de frase. Restaurar a pontuação é o que torna o corte
-      // possível — e a conferência palavra a palavra impede a copy de mudar.
+      // O Whisper às vezes entrega um bloco corrido sem ponto; o fatiador prefere
+      // emendar em fronteira de frase. Restaurar a pontuação é o que mantém o
+      // corte na frase — e a conferência palavra a palavra impede a copy de
+      // mudar. Quando não dá, o aviso sobe pra tela e o fatiador se vira.
       const p = await restaurarPontuacao(cru);
       texto = p.texto;
-      const total = cru.split(/\s+/).filter(Boolean).length;
-      if (p.alinhadas < total) alinhamento = `${total - p.alinhadas} palavra(s) sem pontuação alinhada`;
+      alinhamento = p.aviso;
     }
 
     // --ref-dur calibra o ritmo no PRÓPRIO original. É o ritmo do campeão que
@@ -64,15 +64,17 @@ export const roteiro = async (job: Job): Promise<StepResult> =>
       clipes: { n: number; texto: string; silabas: number; duracao_kling: number }[];
     };
 
-    // Guarda de sanidade. Um clipe com 126 sílabas significa que o fatiador não
-    // achou fronteira de frase e empilhou o roteiro inteiro num clipe só — o
-    // Kling aceitaria e devolveria fala acelerada, US$ 0,56 fora. Já 15s com
-    // ~59 sílabas é o teto legítimo do modelo, não um erro.
+    // Guarda de sanidade, e nada além disso. Um clipe com 108 sílabas em 15s é
+    // fala 3x acelerada: o Kling aceitaria e devolveria lixo, US$ 0,56 fora.
+    // Isso acontecia quando o roteiro vinha em período corrido e o fatiador só
+    // sabia emendar em ponto final — hoje ele desce pra oração e pra palavra
+    // (`atomizar`), então cair aqui significa roteiro que nem por palavra cabe.
+    // Já 15s com ~59 sílabas é o teto legítimo do modelo, não um erro.
     const estourado = clipes.find((c) => c.silabas > 70);
     if (estourado) {
       throw new Error(
         `clipe ${estourado.n} com ${estourado.silabas} sílabas em ${estourado.duracao_kling}s — ` +
-        `o roteiro não tem pontuação suficiente pra fatiar` +
+        `fala acelerada demais pro ${job.manifest.modeloVideo ?? "modelo"} sustentar` +
         (alinhamento ? ` (${alinhamento})` : "") +
         `. Corrija o roteiro no painel e libere de novo.`,
       );

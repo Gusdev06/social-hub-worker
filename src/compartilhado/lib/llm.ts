@@ -77,12 +77,20 @@ async function completar({
   const escolha = corpo.choices?.[0];
   if (escolha?.message?.refusal) throw new RecusaDoEscritor(escolha.message.refusal);
 
+  // `length` com texto junto é resposta CORTADA no meio, não resposta curta — e
+  // ela volta sem nenhum sinal visível. Era assim que a restauração de pontuação
+  // devolvia o roteiro pontuado só até a metade: o resto seguia sem um ponto,
+  // virava um clipe único de 108 sílabas e a rodada morria três passos adiante,
+  // com uma mensagem que apontava pro roteiro em vez de apontar pra cá.
   const texto = (escolha?.message?.content ?? "").trim();
-  if (!texto) {
+  const cortada = escolha?.finish_reason === "length";
+  if (!texto || cortada) {
     throw new Error(
-      escolha?.finish_reason === "length"
-        ? `${onde}: o raciocínio do ${LLM_MODEL} consumiu os ${maxTokens} tokens antes de escrever a resposta`
-        : `${onde}: ${LLM_MODEL} não devolveu texto (finish_reason=${escolha?.finish_reason ?? "?"})`,
+      !cortada
+        ? `${onde}: ${LLM_MODEL} não devolveu texto (finish_reason=${escolha?.finish_reason ?? "?"})`
+        : texto
+          ? `${onde}: a resposta do ${LLM_MODEL} bateu no teto de ${maxTokens} tokens e voltou pela metade`
+          : `${onde}: o raciocínio do ${LLM_MODEL} consumiu os ${maxTokens} tokens antes de escrever a resposta`,
     );
   }
   return texto;
