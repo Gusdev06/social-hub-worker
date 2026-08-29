@@ -19,7 +19,7 @@ analisar → roteiro → imagem_base → clipes → montar → compor → public
 |---|---|---|
 | `analisar` | mede a estrutura do criativo de referência: cortes, faixas, papéis | local (ffmpeg + numpy) |
 | `roteiro` | transcreve (Whisper), pontua (Kimi K3) e fatia em clipes | ~US$ 0,01 |
-| `imagem_base` | gera o rosto novo (Seedream) | ~US$ 0,05 |
+| `imagem_base` | gera o rosto novo (GPT Image 2) | ~US$ 0,06 |
 | `clipes` | gera um clipe por vez, encadeando o último frame do anterior | **US$ 0,08–0,11 por segundo** |
 | `montar` | tira as pausas mortas da fala e costura os clipes | local |
 | `compor` | remonta a edição do original sobre o avatar novo | local |

@@ -80,6 +80,6 @@ export async function rodar(
  */
 export const CUSTO_CENTS: Record<string, number> = {
   "wavespeed-ai/openai-whisper-with-video": 1,
-  "bytedance/seedream-v5.0-pro": 5,
+  "openai/gpt-image-2/text-to-image": 6,
   "sync/lipsync-2": 5,
 };
