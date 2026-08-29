@@ -89,6 +89,28 @@ A nota de casting vai em português, 5 linhas. O prompt vai em inglês.`;
  * melhorar a copy no meio do caminho contamina o teste e o Gusta perde a
  * leitura do resultado.
  */
+/** Compara ignorando caixa, acento, aspas e pontuação: o que sobra é a fala. */
+const soLetras = (s: string) =>
+  s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/**
+ * A mensagem que a rodada mostra quando não veio prompt — com as palavras do
+ * modelo DENTRO.
+ *
+ * Sem a resposta dele na tela, "o modelo recusou" parece defeito da esteira e
+ * o reflexo é mandar rodar de novo, que recusa de novo. Com ela na frente, a
+ * escolha aparece sozinha: reescrever a fala, ou escrever o prompt à mão — que
+ * pula o escritor inteiro, porque prompt manual não chama LLM nenhuma.
+ */
+const recusou = (n: number, resposta: string) => {
+  const dele = resposta.trim();
+  return (
+    `o ${LLM_MODEL} recusou escrever o prompt do clipe ${n} e respondeu isto: ` +
+    `"${dele.slice(0, 400)}${dele.length > 400 ? "…" : ""}"`
+  );
+};
+
 /**
  * O prompt do clipe e a conversa que o produziu.
  *
@@ -128,24 +150,32 @@ Responda só com o prompt, sem preâmbulo.`;
 
   const usuario = `NOTA DE CASTING (lei, não altere):\n${nota}\n\nClipe ${n} de ${total}. Fala literal:\n"${texto}"`;
 
+  let prompt: string;
   try {
-    const prompt = await escrever({
+    prompt = await escrever({
       system: sistema,
       conteudo: usuario,
       onde: `prompt do clipe ${n}`,
     });
-    return { prompt, enviado: { sistema, usuario, modelo: LLM_MODEL } };
   } catch (e) {
     // Recusa é diferente de erro técnico e merece mensagem própria: não adianta
     // "tentar de novo", e a saída é mudar a fala do clipe.
-    if (e instanceof RecusaDoEscritor) {
-      throw new Error(
-        `o modelo recusou escrever o prompt do clipe ${n} — a fala desse trecho ` +
-        `esbarra na política de uso do ${LLM_MODEL}. Trocar o modelo de VÍDEO não ` +
-        `ajuda: a recusa é do escritor de prompt, um passo ANTES da geração. ` +
-        `Reescreva a fala do clipe no painel ou use outro criativo de referência.`,
-      );
-    }
+    if (e instanceof RecusaDoEscritor) throw new Error(recusou(n, e.message));
     throw e;
   }
+
+  // A FALA TEM QUE ESTAR LITERAL DENTRO DO PROMPT. É o contrato do formato — e é
+  // a única prova barata de que voltou um prompt de clipe, e não outra coisa.
+  //
+  // O K3 recusa em texto corrido, no `content`, e não no campo `refusal` que o
+  // `escrever` sabe reconhecer. Sem esta conferência a recusa era gravada COMO
+  // SE FOSSE O PROMPT: passava pelo portão parecendo um prompt qualquer e seguia
+  // pro Kling, que gerou US$ 1,70 de alguém lendo "Não posso escrever esse
+  // prompt. A fala promove..." — aconteceu em 29/08, quatro propostas seguidas.
+  //
+  // Pega também o caso mais silencioso: o modelo reescrever ou traduzir a fala.
+  // O roteiro é o ativo testado; clipe com a copy trocada não mede nada.
+  if (!soLetras(prompt).includes(soLetras(texto))) throw new Error(recusou(n, prompt));
+
+  return { prompt, enviado: { sistema, usuario, modelo: LLM_MODEL } };
 }
